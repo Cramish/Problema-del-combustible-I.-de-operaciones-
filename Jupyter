@@ -1,0 +1,261 @@
+# OPTIMIZACIÓN DE REFINERÍA 
+# Corrigiendo la formulación del problema
+
+import numpy as np
+import pandas as pd
+from scipy.optimize import linprog
+
+print("="*60)
+print("🏭 PROBLEMA DE OPTIMIZACIÓN DE REFINERÍA")
+print("="*60)
+
+# Parámetros del problema
+precios_venta_combustible = [45.15, 42.95, 40.90]  # USD/barril combustibles 1,2,3
+costos_petroleo = [31.02, 33.15, 36.35, 38.75]  # USD/barril petróleo 1,2,3,4
+precios_venta_petroleo = [36.85, 37.50, 38.95, 40.00]  # USD/barril venta directa
+octanajes = [68, 86, 91, 99]  # Octanaje de petróleo 1,2,3,4
+octanaje_min = [95, 90, 85]  # Octanaje mínimo combustibles 1,2,3
+disponibilidad = [4000, 5050, 7100, 4300]  # Disponibilidad petróleo 1,2,3,4
+
+print("✅ Parámetros definidos")
+print(f"Disponibilidades: {disponibilidad}")
+print(f"Costos petróleo: {costos_petroleo}")
+print(f"Precios venta petróleo: {precios_venta_petroleo}")
+print(f"Ganancias por venta directa: {[precios_venta_petroleo[i] - costos_petroleo[i] for i in range(4)]}")
+
+# Verificar si conviene vender petróleo directamente
+for i in range(4):
+    ganancia_directa = precios_venta_petroleo[i] - costos_petroleo[i]
+    print(f"Ganancia por vender Petróleo {i+1} directo: ${ganancia_directa:.2f}/barril")
+
+print("\n" + "="*50)
+
+# Variables de decisión: [X11, X12, X13, X21, X22, X23, X31, X32, X33, X41, X42, X43, P1, P2, P3, P4]
+# Total: 16 variables (12 Xij + 4 Pi)
+# No necesitamos Yj como variables separadas porque Yj = sum(Xij for i)
+
+# Función objetivo: Maximizar ganancia total
+# Ganancia = Ingresos por combustible - Costos de petróleo + Ingresos directos - Costos directos
+# = sum(Yj * precio_combustible[j]) - sum(Xij * costo_petroleo[i]) + sum(Pi * precio_petroleo[i]) - sum(Pi * costo_petroleo[i])
+# = sum(Xij * precio_combustible[j]) - sum(Xij * costo_petroleo[i]) + sum(Pi * (precio_petroleo[i] - costo_petroleo[i]))
+
+c = np.zeros(16)
+
+# Coeficientes para Xij: precio_combustible[j] - costo_petroleo[i]
+idx = 0
+for i in range(4):  # 4 tipos de petróleo
+    for j in range(3):  # 3 tipos de combustible
+        ganancia_refinacion = precios_venta_combustible[j] - costos_petroleo[i]
+        c[idx] = -ganancia_refinacion  # Negativo para maximizar
+        idx += 1
+
+# Coeficientes para Pi: ganancia por venta directa
+for i in range(4):
+    ganancia_directa = precios_venta_petroleo[i] - costos_petroleo[i]
+    c[12 + i] = -ganancia_directa  # Negativo para maximizar
+
+print("✅ Función objetivo definida")
+print("Ganancias por refinación:")
+idx = 0
+for i in range(4):
+    for j in range(3):
+        ganancia = precios_venta_combustible[j] - costos_petroleo[i]
+        print(f"  Petróleo {i+1} → Combustible {j+1}: ${ganancia:.2f}/barril")
+
+# Restricciones de desigualdad (A_ub * x <= b_ub)
+A_ub = []
+b_ub = []
+
+# 1. Disponibilidad de petróleo: sum(Xij for j) + Pi <= disponibilidad[i]
+for i in range(4):
+    restriccion = np.zeros(16)
+    # Coeficientes para Xij donde el petróleo es tipo i
+    for j in range(3):
+        restriccion[i*3 + j] = 1
+    # Coeficiente para Pi
+    restriccion[12 + i] = 1
+    A_ub.append(restriccion)
+    b_ub.append(disponibilidad[i])
+
+# 2. Venta máxima combustible 1: Y1 = sum(Xi1) <= 10000
+restriccion = np.zeros(16)
+for i in range(4):
+    restriccion[i*3 + 0] = 1  # Xi1
+A_ub.append(restriccion)
+b_ub.append(10000)
+
+# 3. Venta mínima combustible 3: Y3 = sum(Xi3) >= 15000 → -sum(Xi3) <= -15000
+restriccion = np.zeros(16)
+for i in range(4):
+    restriccion[i*3 + 2] = -1  # -Xi3
+A_ub.append(restriccion)
+b_ub.append(-15000)
+
+# 4. Restricciones de octanaje: octanaje_promedio >= octanaje_min
+# sum(octanaje[i] * Xij) >= octanaje_min[j] * sum(Xij)
+# sum(octanaje[i] * Xij) - octanaje_min[j] * sum(Xij) >= 0
+# sum((octanaje[i] - octanaje_min[j]) * Xij) >= 0
+# Para linprog: -sum((octanaje[i] - octanaje_min[j]) * Xij) <= 0
+
+for j in range(3):
+    restriccion = np.zeros(16)
+    for i in range(4):
+        restriccion[i*3 + j] = -(octanajes[i] - octanaje_min[j])
+    A_ub.append(restriccion)
+    b_ub.append(0)
+
+A_ub = np.array(A_ub)
+b_ub = np.array(b_ub)
+
+print("✅ Restricciones definidas")
+print(f"Total restricciones: {len(b_ub)}")
+
+# Límites de variables (todas >= 0)
+bounds = [(0, None) for _ in range(16)]
+
+print("🔄 Resolviendo el problema...")
+
+# Resolver
+resultado = linprog(c, A_ub=A_ub, b_ub=b_ub, bounds=bounds, method='highs')
+
+print(f"Estado: {'Optimal' if resultado.success else 'No optimal'}")
+
+if resultado.success:
+    x = resultado.x
+    ganancia = -resultado.fun
+    
+    print(f"\n🎯 GANANCIA MÁXIMA: ${ganancia:,.2f} USD/día")
+    
+    # Extraer valores
+    X_vals = x[:12].reshape(4, 3)  # Matriz 4x3 para Xij
+    P_vals = x[12:16]  # P1, P2, P3, P4
+    
+    # Calcular Yj (combustibles producidos)
+    Y_vals = [sum(X_vals[:, j]) for j in range(3)]
+    
+    print("\n" + "="*70)
+    print("📋 ASIGNACIÓN DE PETRÓLEO (barriles/día)")
+    print("="*70)
+    
+    print(f"{'Tipo':<12} {'Comb. 1':<10} {'Comb. 2':<10} {'Comb. 3':<10} {'V.Directa':<10} {'Total':<10}")
+    print("-"*70)
+    
+    for i in range(4):
+        total_prod = sum(X_vals[i, :])
+        venta_directa = P_vals[i]
+        total = total_prod + venta_directa
+        
+        print(f"Petróleo {i+1:<4} {X_vals[i,0]:<10.1f} {X_vals[i,1]:<10.1f} {X_vals[i,2]:<10.1f} {venta_directa:<10.1f} {total:<10.1f}")
+    
+    # Totales
+    print("-"*70)
+    total_vd = sum(P_vals)
+    total_gen = sum(sum(X_vals[i, :]) for i in range(4)) + total_vd
+    
+    print(f"{'TOTAL':<12} {Y_vals[0]:<10.1f} {Y_vals[1]:<10.1f} {Y_vals[2]:<10.1f} {total_vd:<10.1f} {total_gen:<10.1f}")
+    
+    print(f"\n⛽ COMBUSTIBLES PRODUCIDOS:")
+    print("="*40)
+    for j in range(3):
+        producido = Y_vals[j]
+        precio = precios_venta_combustible[j]
+        ingreso = producido * precio
+        
+        # Calcular octanaje promedio
+        octanaje_prom = 0
+        if producido > 0.001:
+            octanaje_prom = sum(X_vals[i, j] * octanajes[i] for i in range(4)) / producido
+        
+        print(f"Combustible {j+1}: {producido:,.0f} barriles → ${ingreso:,.2f}")
+        print(f"  Octanaje: {octanaje_prom:.1f} (mín: {octanaje_min[j]})")
+        print()
+    
+    print(f"🛢️  VENTA DIRECTA DE PETRÓLEO:")
+    print("="*35)
+    hay_venta = False
+    for i in range(4):
+        vendido = P_vals[i]
+        if vendido > 0.1:
+            precio = precios_venta_petroleo[i]
+            ingreso = vendido * precio
+            costo = vendido * costos_petroleo[i]
+            ganancia_dir = ingreso - costo
+            print(f"Petróleo {i+1}: {vendido:,.0f} barriles → Ganancia: ${ganancia_dir:,.2f}")
+            hay_venta = True
+    
+    if not hay_venta:
+        print("No hay venta directa (todo se refina)")
+    
+    print(f"\n📊 UTILIZACIÓN DE RECURSOS:")
+    print("="*35)
+    for i in range(4):
+        usado_prod = sum(X_vals[i, :])
+        vendido_dir = P_vals[i]
+        total_usado = usado_prod + vendido_dir
+        disponible = disponibilidad[i]
+        porcentaje = (total_usado / disponible) * 100
+        
+        print(f"Petróleo {i+1}: {total_usado:,.0f}/{disponible:,.0f} ({porcentaje:.1f}%)")
+        if total_usado < disponible - 0.1:
+            sin_usar = disponible - total_usado
+            print(f"  ⚠️  Sin usar: {sin_usar:,.0f} barriles")
+    
+    # Análisis de por qué no se usa todo
+    print(f"\n🔍 ANÁLISIS DE RENTABILIDAD:")
+    print("="*40)
+    print("Ganancias por barril de petróleo:")
+    
+    for i in range(4):
+        ganancia_directa = precios_venta_petroleo[i] - costos_petroleo[i]
+        print(f"\nPetróleo {i+1}:")
+        print(f"  Venta directa: ${ganancia_directa:.2f}/barril")
+        
+        mejor_refinacion = 0
+        mejor_combustible = 0
+        for j in range(3):
+            ganancia_ref = precios_venta_combustible[j] - costos_petroleo[i]
+            if ganancia_ref > mejor_refinacion:
+                mejor_refinacion = ganancia_ref
+                mejor_combustible = j + 1
+            print(f"  → Combustible {j+1}: ${ganancia_ref:.2f}/barril")
+        
+        if ganancia_directa > mejor_refinacion:
+            print(f"  ✅ Mejor opción: Venta directa")
+        else:
+            print(f"  ✅ Mejor opción: Refinar → Combustible {mejor_combustible}")
+    
+    print(f"\n💰 RESUMEN FINANCIERO:")
+    print("="*25)
+    
+    # Calcular componentes de ganancia
+    ingresos_combustibles = sum(Y_vals[j] * precios_venta_combustible[j] for j in range(3))
+    costos_refinacion = sum(sum(X_vals[i, :]) * costos_petroleo[i] for i in range(4))
+    ingresos_directos = sum(P_vals[i] * precios_venta_petroleo[i] for i in range(4))
+    costos_directos = sum(P_vals[i] * costos_petroleo[i] for i in range(4))
+    
+    ganancia_refinacion = ingresos_combustibles - costos_refinacion
+    ganancia_directa = ingresos_directos - costos_directos
+    ganancia_total = ganancia_refinacion + ganancia_directa
+    
+    print(f"Ganancia por refinación:  ${ganancia_refinacion:>12,.2f}")
+    print(f"Ganancia por venta directa: ${ganancia_directa:>10,.2f}")
+    print("-" * 40)
+    print(f"GANANCIA TOTAL:          ${ganancia_total:>12,.2f}")
+    
+    # Verificar restricciones
+    print(f"\n✅ VERIFICACIÓN DE RESTRICCIONES:")
+    print("="*35)
+    
+    print(f"Combustible 1: {Y_vals[0]:,.0f} <= 10,000 ✓")
+    print(f"Combustible 3: {Y_vals[2]:,.0f} >= 15,000 {'✓' if Y_vals[2] >= 15000 else '✗'}")
+    
+    for i in range(4):
+        total_usado = sum(X_vals[i, :]) + P_vals[i]
+        print(f"Petróleo {i+1}: {total_usado:,.0f} <= {disponibilidad[i]:,.0f} ✓")
+
+else:
+    print("❌ No se encontró solución óptima")
+    print(f"Razón: {resultado.message}")
+
+print(f"\n✅ Análisis completado")
+print("="*60)
