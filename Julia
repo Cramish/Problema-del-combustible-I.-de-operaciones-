@@ -1,0 +1,128 @@
+using JuMP, HiGHS
+
+# Definir el modelo de optimización
+model = Model(HiGHS.Optimizer)
+
+# Variables de decisión
+# x_ij = barriles del tipo de petróleo i usados para producir combustible j
+@variable(model, x11 >= 0)  # Petróleo tipo 1 para combustible 1
+@variable(model, x12 >= 0)  # Petróleo tipo 1 para combustible 2
+@variable(model, x13 >= 0)  # Petróleo tipo 1 para combustible 3
+@variable(model, x21 >= 0)  # Petróleo tipo 2 para combustible 1
+@variable(model, x22 >= 0)  # Petróleo tipo 2 para combustible 2
+@variable(model, x23 >= 0)  # Petróleo tipo 2 para combustible 3
+@variable(model, x31 >= 0)  # Petróleo tipo 3 para combustible 1
+@variable(model, x32 >= 0)  # Petróleo tipo 3 para combustible 2
+@variable(model, x33 >= 0)  # Petróleo tipo 3 para combustible 3
+@variable(model, x41 >= 0)  # Petróleo tipo 4 para combustible 1
+@variable(model, x42 >= 0)  # Petróleo tipo 4 para combustible 2
+@variable(model, x43 >= 0)  # Petróleo tipo 4 para combustible 3
+
+# Variables auxiliares para el combustible total producido
+@variable(model, y1 >= 0)   # Total combustible tipo 1
+@variable(model, y2 >= 0)   # Total combustible tipo 2
+@variable(model, y3 >= 0)   # Total combustible tipo 3
+
+# Restricciones de disponibilidad de petróleo
+@constraint(model, x11 + x12 + x13 <= 4000)  # Petróleo tipo 1
+@constraint(model, x21 + x22 + x23 <= 5050)  # Petróleo tipo 2
+@constraint(model, x31 + x32 + x33 <= 7100)  # Petróleo tipo 3
+@constraint(model, x41 + x42 + x43 <= 4300)  # Petróleo tipo 4
+
+# Definir el combustible total producido
+@constraint(model, y1 == x11 + x21 + x31 + x41)
+@constraint(model, y2 == x12 + x22 + x32 + x42)
+@constraint(model, y3 == x13 + x23 + x33 + x43)
+
+# Restricciones de venta esperada
+@constraint(model, y1 <= 10000)  # Máximo combustible 1
+@constraint(model, y3 >= 15000)  # Mínimo combustible 3
+
+# Restricciones de octanaje mínimo
+# Octanaje del combustible 1 >= 95
+@constraint(model, 68*x11 + 86*x21 + 91*x31 + 99*x41 >= 95*y1)
+
+# Octanaje del combustible 2 >= 90
+@constraint(model, 68*x12 + 86*x22 + 91*x32 + 99*x42 >= 90*y2)
+
+# Octanaje del combustible 3 >= 85
+@constraint(model, 68*x13 + 86*x23 + 91*x33 + 99*x43 >= 85*y3)
+
+# Función objetivo: maximizar lucro
+# Lucro = Ingresos por ventas - Costos de petróleo
+ingresos = 45.15*y1 + 42.95*y2 + 40.90*y3
+costos = 31.02*x11 + 31.02*x12 + 31.02*x13 +
+         33.15*x21 + 33.15*x22 + 33.15*x23 +
+         36.35*x31 + 36.35*x32 + 36.35*x33 +
+         38.75*x41 + 38.75*x42 + 38.75*x43
+
+@objective(model, Max, ingresos - costos)
+
+# Resolver el modelo
+optimize!(model)
+
+# Mostrar resultados
+println("=== RESULTADOS DE LA OPTIMIZACIÓN ===")
+println("Estado de la solución: ", termination_status(model))
+lucro_maximo = round(objective_value(model), digits=2)
+println("Valor objetivo (Lucro máximo): USD ", lucro_maximo)
+println()
+
+# Mostrar variables de decisión
+println("=== DISTRIBUCIÓN ÓPTIMA DE PETRÓLEO ===")
+variables = [x11, x12, x13, x21, x22, x23, x31, x32, x33, x41, x42, x43]
+nombres = ["x11", "x12", "x13", "x21", "x22", "x23", "x31", "x32", "x33", "x41", "x42", "x43"]
+
+for (i, var) in enumerate(variables)
+    val = value(var)
+    if val > 0.01  # Solo mostrar valores significativos
+        println(nombres[i], " = ", round(val, digits=2), " barriles")
+    end
+end
+
+println()
+
+# Mostrar producción de combustibles
+println("=== PRODUCCIÓN DE COMBUSTIBLES ===")
+combustible1 = round(value(y1), digits=2)
+combustible2 = round(value(y2), digits=2)
+combustible3 = round(value(y3), digits=2)
+total_producido = round(combustible1 + combustible2 + combustible3, digits=2)
+
+println("Combustible tipo 1: ", combustible1, " barriles")
+println("Combustible tipo 2: ", combustible2, " barriles")
+println("Combustible tipo 3: ", combustible3, " barriles")
+println("Total producido: ", total_producido, " barriles")
+
+println()
+
+# Verificar octanajes
+if combustible1 > 0
+    octanaje1 = (68*value(x11) + 86*value(x21) + 91*value(x31) + 99*value(x41)) / value(y1)
+    println("=== VERIFICACIÓN DE OCTANAJES ===")
+    println("Octanaje combustible 1: ", round(octanaje1, digits=2), " (mín: 95)")
+end
+
+if combustible2 > 0
+    octanaje2 = (68*value(x12) + 86*value(x22) + 91*value(x32) + 99*value(x42)) / value(y2)
+    println("Octanaje combustible 2: ", round(octanaje2, digits=2), " (mín: 90)")
+end
+
+if combustible3 > 0
+    octanaje3 = (68*value(x13) + 86*value(x23) + 91*value(x33) + 99*value(x43)) / value(y3)
+    println("Octanaje combustible 3: ", round(octanaje3, digits=2), " (mín: 85)")
+end
+
+println()
+
+# Mostrar uso de recursos
+println("=== USO DE PETRÓLEO POR TIPO ===")
+uso_tipo1 = round(value(x11) + value(x12) + value(x13), digits=2)
+uso_tipo2 = round(value(x21) + value(x22) + value(x23), digits=2)
+uso_tipo3 = round(value(x31) + value(x32) + value(x33), digits=2)
+uso_tipo4 = round(value(x41) + value(x42) + value(x43), digits=2)
+
+println("Petróleo tipo 1: ", uso_tipo1, " / 4000 barriles")
+println("Petróleo tipo 2: ", uso_tipo2, " / 5050 barriles")
+println("Petróleo tipo 3: ", uso_tipo3, " / 7100 barriles")
+println("Petróleo tipo 4: ", uso_tipo4, " / 4300 barriles")
